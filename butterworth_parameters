@@ -1,0 +1,120 @@
+import cv2
+import numpy as np
+import os
+from datetime import datetime
+
+
+def butterworth_high_pass(image, cutoff, order, boost=1.2, detail_weight=0.3):
+    """
+    Erweiterter Butterworth High-Pass Filter
+    cutoff: Grenzfrequenz (je niedriger, desto mehr Details)
+    order: Steilheit des Filters
+    boost: Verstärkung des Originalbildes
+    detail_weight: Gewichtung der gefilterten Details
+    """
+    # Fourier Transform
+    f = np.fft.fft2(image)
+    fshift = np.fft.fftshift(f)
+
+    # Erstelle Butterworth High-Pass Filter
+    rows, cols = image.shape
+    crow, ccol = rows // 2, cols // 2
+    y, x = np.ogrid[-crow:rows - crow, -ccol:cols - ccol]
+    d = np.sqrt(x * x + y * y)
+    butterworth = 1 / (1 + (cutoff / d) ** (2 * order))
+
+    # Wende Filter an
+    fshift_filtered = fshift * butterworth
+    f_ishift = np.fft.ifftshift(fshift_filtered)
+    img_filtered = np.fft.ifft2(f_ishift)
+    img_filtered = np.abs(img_filtered)
+
+    # Normalisiere
+    img_filtered = cv2.normalize(img_filtered, None, 0, 255, cv2.NORM_MINMAX)
+
+    # Kombiniere mit Original mit anpassbaren Parametern
+    sharpened = cv2.addWeighted(image, boost, img_filtered.astype(np.uint8), detail_weight, 0)
+
+    # Optional: Zusätzliche Kontraststeigerung durch Histogram Stretching
+    min_val = np.min(sharpened)
+    max_val = np.max(sharpened)
+    sharpened = ((sharpened - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+
+    return sharpened
+
+
+def main():
+    # Eingabepfad
+    image_path = "C:/Users/s.baumgart/Desktop/preprocessing AngioNet/frame_35 (3).png"
+
+    # Erstelle Ausgabeordner
+    output_dir = os.path.join(os.path.dirname(image_path), "butterworth_results")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Lese Bild ein
+    original = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if original is None:
+        print(f"Fehler beim Einlesen des Bildes: {image_path}")
+        return
+
+    # Erstelle Zeitstempel für eindeutige Benennung
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Verschiedene Parameter-Kombinationen für den Butterworth-Filter
+    parameters = {
+        'butterworth_fine': {
+            'cutoff': 25,  # Niedrigerer Cutoff für mehr Details
+            'order': 2,
+            'boost': 1.2,
+            'detail_weight': 0.3
+        },
+        'butterworth_medium': {
+            'cutoff': 20,  # Noch mehr Details
+            'order': 3,  # Steilerer Filter
+            'boost': 1.3,  # Stärkere Originalbildverstärkung
+            'detail_weight': 0.35
+        },
+        'butterworth_strong': {
+            'cutoff': 15,  # Maximale Details
+            'order': 4,  # Sehr steiler Filter
+            'boost': 1.4,  # Starke Originalbildverstärkung
+            'detail_weight': 0.4
+        },
+        'butterworth_extreme': {
+            'cutoff': 10,
+            'order': 2,
+            'boost': 1.5,
+            'detail_weight': 0.45
+        }
+    }
+
+    # Wende Filter mit verschiedenen Parametern an
+    for name, params in parameters.items():
+        try:
+            # Wende Filter an
+            sharpened = butterworth_high_pass(
+                original,
+                cutoff=params['cutoff'],
+                order=params['order'],
+                boost=params['boost'],
+                detail_weight=params['detail_weight']
+            )
+
+            # Erstelle Ausgabepfad
+            output_path = os.path.join(output_dir, f"{name}_{timestamp}.png")
+
+            # Speichere Ergebnis
+            cv2.imwrite(output_path, sharpened)
+            print(f"Erfolgreich gespeichert: {output_path}")
+
+        except Exception as e:
+            print(f"Fehler bei Verarbeitung {name}: {str(e)}")
+
+    # Speichere auch das Originalbild zum Vergleich
+    original_output_path = os.path.join(output_dir, f"original_{timestamp}.png")
+    cv2.imwrite(original_output_path, original)
+    print(f"Originalbild gespeichert: {original_output_path}")
+
+
+if __name__ == "__main__":
+    main()
