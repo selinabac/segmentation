@@ -1,0 +1,145 @@
+import cv2
+import numpy as np
+import os
+from datetime import datetime
+
+
+def butterworth_high_pass(image, cutoff=25, order=2, boost=1.2, detail_weight=0.3):
+    """
+    Butterworth High-Pass Filter mit Fine-Parametern
+    """
+    # Fourier Transform
+    f = np.fft.fft2(image)
+    fshift = np.fft.fftshift(f)
+
+    # Erstelle Butterworth High-Pass Filter
+    rows, cols = image.shape
+    crow, ccol = rows // 2, cols // 2
+    y, x = np.ogrid[-crow:rows - crow, -ccol:cols - ccol]
+    d = np.sqrt(x * x + y * y)
+    butterworth = 1 / (1 + (cutoff / d) ** (2 * order))
+
+    # Wende Filter an
+    fshift_filtered = fshift * butterworth
+    f_ishift = np.fft.ifftshift(fshift_filtered)
+    img_filtered = np.fft.ifft2(f_ishift)
+    img_filtered = np.abs(img_filtered)
+
+    # Normalisiere
+    img_filtered = cv2.normalize(img_filtered, None, 0, 255, cv2.NORM_MINMAX)
+
+    # Kombiniere mit Original
+    sharpened = cv2.addWeighted(image, boost, img_filtered.astype(np.uint8), detail_weight, 0)
+
+    return sharpened
+
+
+def gradient_sharpening(image, ksize=3, alpha=1.0, beta=0.45, gamma=-12, brightness_factor=0.88):
+    """
+    Gradient Sharpening mit Balanced Dark Parametern
+    """
+    # Berechne Sobel Gradienten
+    grad_x = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=ksize)
+    grad_y = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=ksize)
+
+    # Kombiniere Gradienten
+    gradient = np.sqrt(grad_x ** 2 + grad_y ** 2)
+    gradient = np.power(gradient, 0.7)
+
+    # Normalisiere Gradient
+    gradient = cv2.normalize(gradient, None, 0, 255, cv2.NORM_MINMAX)
+
+    # Addiere gewichteten Gradienten zum Original
+    sharpened = cv2.addWeighted(image, alpha, gradient.astype(np.uint8), beta, gamma)
+
+    # Helligkeitsanpassung
+    sharpened = cv2.multiply(sharpened, brightness_factor)
+    sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
+
+    return sharpened
+
+
+def enhance_image(image):
+    """
+    Verbessert die Bildqualität durch Schärfung und Kontrastverstärkung
+    """
+    # Normalisierung
+    img_normalized = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
+
+    # Bilateraler Filter für Rauschreduzierung bei Kantenschärfe-Erhaltung
+    img_smooth = cv2.bilateralFilter(img_normalized, d=9, sigmaColor=75, sigmaSpace=75)
+
+    # Unsharp Masking für Schärfung
+    gaussian = cv2.GaussianBlur(img_smooth, (0, 0), 5.0)
+    img_sharp = cv2.addWeighted(img_smooth, 2.0, gaussian, -1.0, 0)
+
+    # CLAHE für verbesserten Kontrast
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+    img_enhanced = clahe.apply(img_sharp)
+
+    return img_enhanced
+
+
+def apply_filters_to_folder(input_folder, file_extension=".png"):
+    """
+    Wendet alle Filter auf alle Bilder im angegebenen Ordner an
+    """
+    # Erstelle Ausgabeordner
+    output_dir = os.path.join(input_folder, "filter_comparison")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Finde alle Bilder im Ordner
+    image_files = [f for f in os.listdir(input_folder) if f.lower().endswith(file_extension)]
+
+    # Erstelle Zeitstempel
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    for image_file in image_files:
+        try:
+            # Lese Bild ein
+            image_path = os.path.join(input_folder, image_file)
+            original = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+
+            if original is None:
+                print(f"Fehler beim Einlesen des Bildes: {image_path}")
+                continue
+
+            # Wende alle Filter an
+            butterworth_result = butterworth_high_pass(original)
+            gradient_result = gradient_sharpening(original)
+            enhanced_result = enhance_image(original)
+
+            # Erstelle Ausgabepfade
+            base_name = os.path.splitext(image_file)[0]
+            butterworth_path = os.path.join(output_dir, f"{base_name}_butterworth_{timestamp}.png")
+            gradient_path = os.path.join(output_dir, f"{base_name}_gradient_{timestamp}.png")
+            enhanced_path = os.path.join(output_dir, f"{base_name}_enhanced_{timestamp}.png")
+            original_path = os.path.join(output_dir, f"{base_name}_original_{timestamp}.png")
+
+            # Speichere Ergebnisse
+            cv2.imwrite(butterworth_path, butterworth_result)
+            cv2.imwrite(gradient_path, gradient_result)
+            cv2.imwrite(enhanced_path, enhanced_result)
+            cv2.imwrite(original_path, original)
+
+            print(f"Verarbeitet: {image_file}")
+            print(f"  Butterworth: {butterworth_path}")
+            print(f"  Gradient: {gradient_path}")
+            print(f"  Enhanced: {enhanced_path}")
+            print(f"  Original: {original_path}")
+
+        except Exception as e:
+            print(f"Fehler bei der Verarbeitung von {image_file}: {str(e)}")
+
+
+def main():
+    # Ordner mit den Bildern
+    input_folder = "C:/Users/s.baumgart/Desktop/preprocessing AngioNet"
+
+    # Verarbeite alle Bilder im Ordner
+    apply_filters_to_folder(input_folder)
+
+
+if __name__ == "__main__":
+    main()
+
