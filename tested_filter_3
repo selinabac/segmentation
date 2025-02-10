@@ -1,0 +1,152 @@
+import cv2
+import numpy as np
+import os
+from datetime import datetime
+from scipy import ndimage
+
+
+def unsharp_masking(image, kernel_size=5, sigma=1.0, amount=1.0, threshold=0):
+    gaussian = cv2.GaussianBlur(image, (kernel_size, kernel_size), sigma)
+    mask = cv2.subtract(image, gaussian)
+    mask = cv2.threshold(mask, threshold, 255, cv2.THRESH_TOZERO)[1]
+    sharpened = cv2.addWeighted(image, 1.0, mask, amount, 0)
+    return sharpened
+
+
+def butterworth_high_pass(image, cutoff=30, order=2):
+    f = np.fft.fft2(image)
+    fshift = np.fft.fftshift(f)
+    rows, cols = image.shape
+    crow, ccol = rows // 2, cols // 2
+    y, x = np.ogrid[-crow:rows - crow, -ccol:cols - ccol]
+    d = np.sqrt(x * x + y * y)
+    butterworth = 1 / (1 + (cutoff / d) ** (2 * order))
+    fshift_filtered = fshift * butterworth
+    f_ishift = np.fft.ifftshift(fshift_filtered)
+    img_filtered = np.fft.ifft2(f_ishift)
+    img_filtered = np.abs(img_filtered)
+    img_filtered = cv2.normalize(img_filtered, None, 0, 255, cv2.NORM_MINMAX)
+    sharpened = cv2.addWeighted(image, 1.2, img_filtered.astype(np.uint8), 0.3, 0)
+    return sharpened
+
+
+def mexican_hat_filter(image, size=5, sigma=1.0):
+    """
+    Mexican Hat (Laplacian of Gaussian) Filter
+    Gut für Kantendetektion und Schärfung
+    """
+    x = np.linspace(-size, size, 2 * size + 1)
+    y = np.linspace(-size, size, 2 * size + 1)
+    X, Y = np.meshgrid(x, y)
+    R = np.sqrt(X ** 2 + Y ** 2)
+
+    # Mexican Hat Kernel
+    kernel = (1 - (R ** 2) / (2 * sigma ** 2)) * np.exp(-(R ** 2) / (2 * sigma ** 2))
+    kernel = kernel - np.mean(kernel)  # Normalisierung
+
+    filtered = ndimage.convolve(image.astype(float), kernel)
+    enhanced = image + filtered
+    return np.clip(enhanced, 0, 255).astype(np.uint8)
+
+
+def bilateral_sharpening(image, d=9, sigma_color=75, sigma_space=75):
+    """
+    Bilateral Filter kombiniert mit Unsharp Masking
+    Bewahrt Kanten während der Schärfung
+    """
+    # Bilateral Filter für Rauschunterdrückung
+    smooth = cv2.bilateralFilter(image, d, sigma_color, sigma_space)
+
+    # Unsharp Masking auf dem geglätteten Bild
+    detail = cv2.subtract(image, smooth)
+    sharpened = cv2.add(image, detail)
+
+    return sharpened
+
+
+def dog_sharpening(image, sigma1=1, sigma2=1.6):
+    """
+    Difference of Gaussians (DoG) Filter
+    Gut für die Hervorhebung von Strukturen verschiedener Größe
+    """
+    # Zwei Gaussian Blur mit verschiedenen Sigma
+    g1 = cv2.GaussianBlur(image, (0, 0), sigma1)
+    g2 = cv2.GaussianBlur(image, (0, 0), sigma2)
+
+    # Difference of Gaussians
+    dog = g1 - g2
+
+    # Kombiniere mit Original
+    sharpened = cv2.addWeighted(image, 1.5, dog, 0.5, 0)
+    return np.clip(sharpened, 0, 255).astype(np.uint8)
+
+
+def gradient_sharpening(image):
+    """
+    Gradient-basierte Schärfung
+    Kombiniert Sobel-Gradienten für Kantenverstärkung
+    """
+    # Berechne Sobel Gradienten
+    grad_x = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=3)
+
+    # Kombiniere Gradienten
+    gradient = np.sqrt(grad_x ** 2 + grad_y ** 2)
+    gradient = cv2.normalize(gradient, None, 0, 255, cv2.NORM_MINMAX)
+
+    # Addiere gewichteten Gradienten zum Original
+    sharpened = cv2.addWeighted(image, 1.0, gradient.astype(np.uint8), 0.5, 0)
+    return sharpened
+
+
+def main():
+    # Eingabepfad
+    image_path = "C:/Users/s.baumgart/Desktop/preprocessing AngioNet/frame_20 (41).png"
+
+    # Erstelle Ausgabeordner
+    output_dir = os.path.join(os.path.dirname(image_path), "sharpened_results")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Lese Bild ein
+    original = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if original is None:
+        print(f"Fehler beim Einlesen des Bildes: {image_path}")
+        return
+
+    # Erstelle Zeitstempel für eindeutige Benennung
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Dictionary mit allen Filtern
+    filters = {
+        'unsharp_mask_strong': lambda img: unsharp_masking(img, kernel_size=5, sigma=1.0, amount=2.0),
+        'butterworth': lambda img: butterworth_high_pass(img, cutoff=30, order=2),
+        'mexican_hat': lambda img: mexican_hat_filter(img, size=5, sigma=1.0),
+        'bilateral_sharp': lambda img: bilateral_sharpening(img),
+        'dog_sharp': lambda img: dog_sharpening(img),
+        'gradient_sharp': lambda img: gradient_sharpening(img)
+    }
+
+    # Wende jeden Filter an und speichere das Ergebnis
+    for filter_name, filter_func in filters.items():
+        try:
+            # Wende Filter an
+            sharpened = filter_func(original)
+
+            # Erstelle Ausgabepfad
+            output_path = os.path.join(output_dir, f"{filter_name}_{timestamp}.png")
+
+            # Speichere Ergebnis
+            cv2.imwrite(output_path, sharpened)
+            print(f"Erfolgreich gespeichert: {output_path}")
+
+        except Exception as e:
+            print(f"Fehler bei Filter {filter_name}: {str(e)}")
+
+    # Speichere auch das Originalbild zum Vergleich
+    original_output_path = os.path.join(output_dir, f"original_{timestamp}.png")
+    cv2.imwrite(original_output_path, original)
+    print(f"Originalbild gespeichert: {original_output_path}")
+
+
+if __name__ == "__main__":
+    main()
