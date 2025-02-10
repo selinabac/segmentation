@@ -1,0 +1,111 @@
+import cv2
+import numpy as np
+import os
+from datetime import datetime
+
+
+def unsharp_masking(image, kernel_size=5, sigma=1.0, amount=1.0, threshold=0):
+    # Gaussian blur
+    gaussian = cv2.GaussianBlur(image, (kernel_size, kernel_size), sigma)
+
+    # Berechne die Maske
+    mask = cv2.subtract(image, gaussian)
+
+    # Wende Threshold an
+    mask = cv2.threshold(mask, threshold, 255, cv2.THRESH_TOZERO)[1]
+
+    # Addiere die gewichtete Maske zum Original
+    sharpened = cv2.addWeighted(image, 1.0, mask, amount, 0)
+
+    return sharpened
+
+
+def laplacian_sharpening(image, kernel_size=3):
+    # Laplace Filter
+    laplacian = cv2.Laplacian(image, cv2.CV_64F, ksize=kernel_size)
+
+    # Konvertiere zu uint8 und addiere zum Original
+    laplacian = np.uint8(np.absolute(laplacian))
+    sharpened = cv2.add(image, laplacian)
+
+    return sharpened
+
+
+def sobel_sharpening(image):
+    # Sobel Filter in x und y Richtung
+    sobelx = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=3)
+    sobely = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=3)
+
+    # Kombiniere die Gradienten
+    gradient = np.sqrt(sobelx ** 2 + sobely ** 2)
+    gradient = np.uint8(gradient)
+
+    # Addiere zum Original
+    sharpened = cv2.add(image, gradient)
+
+    return sharpened
+
+
+def high_boost_filtering(image, boost_factor=2.0):
+    # Gaussian blur
+    blurred = cv2.GaussianBlur(image, (5, 5), 1.0)
+
+    # High-boost filtering
+    mask = cv2.subtract(image, blurred)
+    sharpened = cv2.addWeighted(image, 1.0 + boost_factor, mask, boost_factor, 0)
+
+    return sharpened
+
+
+def main():
+    # Eingabepfad
+    image_path = "C:/Users/s.baumgart/Desktop/preprocessing AngioNet/frame_20 (41).png"
+
+    # Erstelle Ausgabeordner
+    output_dir = os.path.join(os.path.dirname(image_path), "sharpened_results")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Lese Bild ein
+    original = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if original is None:
+        print(f"Fehler beim Einlesen des Bildes: {image_path}")
+        return
+
+    # Erstelle Zeitstempel für eindeutige Benennung
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Dictionary mit Filtern und deren Parametern
+    filters = {
+        'unsharp_mask_light': lambda img: unsharp_masking(img, kernel_size=5, sigma=1.0, amount=1.0),
+        'unsharp_mask_strong': lambda img: unsharp_masking(img, kernel_size=5, sigma=1.0, amount=2.0),
+        'laplacian': lambda img: laplacian_sharpening(img),
+        'sobel': lambda img: sobel_sharpening(img),
+        'high_boost_light': lambda img: high_boost_filtering(img, boost_factor=1.5),
+        'high_boost_strong': lambda img: high_boost_filtering(img, boost_factor=2.5)
+    }
+
+    # Wende jeden Filter an und speichere das Ergebnis
+    for filter_name, filter_func in filters.items():
+        try:
+            # Wende Filter an
+            sharpened = filter_func(original)
+
+            # Erstelle Ausgabepfad
+            output_path = os.path.join(output_dir, f"{filter_name}_{timestamp}.png")
+
+            # Speichere Ergebnis
+            cv2.imwrite(output_path, sharpened)
+            print(f"Erfolgreich gespeichert: {output_path}")
+
+        except Exception as e:
+            print(f"Fehler bei Filter {filter_name}: {str(e)}")
+
+    # Speichere auch das Originalbild zum Vergleich
+    original_output_path = os.path.join(output_dir, f"original_{timestamp}.png")
+    cv2.imwrite(original_output_path, original)
+    print(f"Originalbild gespeichert: {original_output_path}")
+
+
+if __name__ == "__main__":
+    main()
+
