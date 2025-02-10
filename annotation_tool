@@ -1,0 +1,398 @@
+import cv2
+import numpy as np
+import tkinter as tk
+from tkinter import filedialog
+from PIL import Image, ImageTk
+import os
+
+
+class VesselAnnotator:
+    def save_annotation(self):
+        """Speichert das Originalbild und die binäre Maske separat"""
+        if self.image is not None and self.annotation_mask is not None:
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".png",
+                filetypes=[("PNG files", "*.png")]
+            )
+            if file_path:
+                # Basis-Dateiname ohne Erweiterung
+                base_path = os.path.splitext(file_path)[0]
+
+                # Speichere Originalbild
+                cv2.imwrite(f"{base_path}_original.png", self.image)
+                print(f"Originalbild gespeichert als: {base_path}_original.png")
+
+                # Erstelle und speichere binäre Maske (weiße Gefäße auf schwarzem Hintergrund)
+                binary_mask = np.zeros_like(self.image)
+                binary_mask[self.annotation_mask > 0] = 255  # Gefäße = weiß (255)
+                cv2.imwrite(f"{base_path}_mask.png", binary_mask)
+                print(f"Binäre Maske gespeichert als: {base_path}_mask.png")
+
+                # Speichere Visualisierung für Qualitätskontrolle
+                visualization = cv2.cvtColor(self.image, cv2.COLOR_GRAY2BGR)
+                visualization[self.annotation_mask > 0] = [0, 0, 255]  # Rote Überlagerung
+                cv2.imwrite(f"{base_path}_overlay.png", visualization)
+                print(f"Visualisierung gespeichert als: {base_path}_overlay.png")
+
+    def __init__(self, window_title="Arterien Annotator"):
+        self.root = tk.Tk()
+        self.root.title(window_title)
+
+        # Hauptframe
+        self.main_frame = tk.Frame(self.root)
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Buttons
+        self.button_frame = tk.Frame(self.main_frame)
+        self.button_frame.pack(side=tk.TOP, fill=tk.X)
+
+        tk.Button(self.button_frame, text="Bild laden", command=self.load_image).pack(side=tk.LEFT, padx=5)
+        tk.Button(self.button_frame, text="Speichern", command=self.save_annotation).pack(side=tk.LEFT, padx=5)
+        tk.Button(self.button_frame, text="Rückgängig", command=self.undo_last).pack(side=tk.LEFT, padx=5)
+        tk.Button(self.button_frame, text="Zurücksetzen", command=self.clear_annotation).pack(side=tk.LEFT, padx=5)
+
+        # Zoom Controls
+        tk.Label(self.button_frame, text="Zoom:").pack(side=tk.LEFT, padx=5)
+        self.zoom_scale = tk.Scale(self.button_frame, from_=100, to=400, orient=tk.HORIZONTAL,
+                                   command=self.on_zoom_change, length=100)
+        self.zoom_scale.set(100)
+        self.zoom_scale.pack(side=tk.LEFT, padx=5)
+
+        # Stift-Größe
+        self.pen_size = tk.IntVar(value=3)
+        tk.Label(self.button_frame, text="Stift-Größe:").pack(side=tk.LEFT, padx=5)
+        tk.Scale(self.button_frame, from_=1, to=10, orient=tk.HORIZONTAL,
+                 variable=self.pen_size, length=100).pack(side=tk.LEFT, padx=5)
+
+        # Frame für Canvas und Scrollbars
+        self.canvas_frame = tk.Frame(self.main_frame)
+        self.canvas_frame.pack(fill=tk.BOTH, expand=True)
+        self.canvas_frame.grid_rowconfigure(0, weight=1)
+        self.canvas_frame.grid_columnconfigure(0, weight=1)
+
+        # Canvas für das Bild
+        self.canvas = tk.Canvas(self.canvas_frame, cursor="cross")
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+
+        # Scrollbars
+        self.h_scroll = tk.Scrollbar(self.canvas_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
+        self.h_scroll.grid(row=1, column=0, sticky="ew")
+
+        self.v_scroll = tk.Scrollbar(self.canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.v_scroll.grid(row=0, column=1, sticky="ns")
+
+        self.canvas.configure(xscrollcommand=self.h_scroll.set, yscrollcommand=self.v_scroll.set)
+
+        # Minimale Fenstergröße setzen
+        self.root.minsize(600, 600)
+
+        # Bildvariablen
+        self.image = None
+        self.photo = None
+        self.annotation_mask = None
+        self.current_stroke_mask = None  # Maske für den aktuellen Strich
+        self.annotation_history = []
+        self.zoom_factor = 1.0
+        self.drawing = False
+        self.last_x = None
+        self.last_y = None
+
+        # Event Bindings
+        self.canvas.bind("<Button-1>", self.start_draw)
+        self.canvas.bind("<B1-Motion>", self.draw)
+        self.canvas.bind("<ButtonRelease-1>", self.stop_draw)
+        self.canvas.bind("<MouseWheel>", self.on_mousewheel)  # Für Windows
+        self.canvas.bind("<Button-4>", self.on_mousewheel)  # Für Linux
+        self.canvas.bind("<Button-5>", self.on_mousewheel)  # Für Linux
+        self.canvas.bind("<Configure>", self.center_image)  # Bei Größenänderung
+
+        # Fenster in den Vordergrund
+        self.root.lift()
+        self.root.attributes('-topmost', True)
+        self.root.after_idle(self.root.attributes, '-topmost', False)
+
+    def enhance_image(self, image):
+        """Verbessert die Bildqualität durch Butterworth High-Pass Filter"""
+
+        def butterworth_high_pass(image, cutoff, order, boost=1.2, detail_weight=0.3):
+            """
+            Erweiterter Butterworth High-Pass Filter
+            cutoff: Grenzfrequenz (je niedriger, desto mehr Details)
+            order: Steilheit des Filters
+            boost: Verstärkung des Originalbildes
+            detail_weight: Gewichtung der gefilterten Details
+            """
+            # Fourier Transform
+            f = np.fft.fft2(image)
+            fshift = np.fft.fftshift(f)
+
+            # Erstelle Butterworth High-Pass Filter
+            rows, cols = image.shape
+            crow, ccol = rows // 2, cols // 2
+            y, x = np.ogrid[-crow:rows - crow, -ccol:cols - ccol]
+            d = np.sqrt(x * x + y * y)
+            butterworth = 1 / (1 + (cutoff / d) ** (2 * order))
+
+            # Wende Filter an
+            fshift_filtered = fshift * butterworth
+            f_ishift = np.fft.ifftshift(fshift_filtered)
+            img_filtered = np.fft.ifft2(f_ishift)
+            img_filtered = np.abs(img_filtered)
+
+            # Normalisiere
+            img_filtered = cv2.normalize(img_filtered, None, 0, 255, cv2.NORM_MINMAX)
+
+            # Kombiniere mit Original mit anpassbaren Parametern
+            sharpened = cv2.addWeighted(image, boost, img_filtered.astype(np.uint8), detail_weight, 0)
+
+            # Optional: Zusätzliche Kontraststeigerung durch Histogram Stretching
+            min_val = np.min(sharpened)
+            max_val = np.max(sharpened)
+            sharpened = ((sharpened - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+
+            return sharpened
+
+        # Wende den High-Pass Filter mit den Standard-Parametern an
+        return butterworth_high_pass(image, cutoff=10, order=2, boost=1.2, detail_weight=0.3)
+
+    def get_image_position(self):
+        """Ermittelt die aktuelle Position des Bildes im Canvas"""
+        bbox = self.canvas.bbox("all")
+        if not bbox:
+            return 0, 0
+        return bbox[0], bbox[1]
+
+    def canvas_to_image_coords(self, x, y):
+        """Konvertiert Canvas-Koordinaten zu Bildkoordinaten"""
+        # Scrollposition berücksichtigen
+        canvas_x = self.canvas.canvasx(x)
+        canvas_y = self.canvas.canvasy(y)
+
+        # Bildposition berücksichtigen
+        img_x, img_y = self.get_image_position()
+        canvas_x -= img_x
+        canvas_y -= img_y
+
+        # Zoom-Faktor berücksichtigen
+        image_x = int(canvas_x / self.zoom_factor)
+        image_y = int(canvas_y / self.zoom_factor)
+
+        # Auf Bildgrenzen beschränken
+        image_x = max(0, min(image_x, self.image.shape[1] - 1))
+        image_y = max(0, min(image_y, self.image.shape[0] - 1))
+
+        return image_x, image_y
+
+    def center_image(self, event=None):
+        """Zentriert das Bild im Canvas"""
+        if self.photo is None:
+            return
+
+        # Warte auf die tatsächliche Canvas-Größe
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+
+        if canvas_width == 1 or canvas_height == 1:  # Canvas noch nicht richtig initialisiert
+            self.root.after(100, self.center_image)  # Erneut versuchen nach 100ms
+            return
+
+        # Bildgröße ermitteln
+        photo_width = self.photo.width()
+        photo_height = self.photo.height()
+
+        # Position für Zentrierung berechnen
+        x = max(0, (canvas_width - photo_width) // 2)
+        y = max(0, (canvas_height - photo_height) // 2)
+
+        # Bild neu positionieren
+        self.canvas.delete("all")
+        self.canvas.create_image(x, y, image=self.photo, anchor=tk.NW)
+
+        # Scrollregion aktualisieren
+        self.canvas.config(scrollregion=self.canvas.bbox("all"))
+
+        # Scrollbars auf die Mitte setzen
+        if photo_width > canvas_width:
+            self.canvas.xview_moveto((photo_width - canvas_width) / (2 * photo_width))
+        if photo_height > canvas_height:
+            self.canvas.yview_moveto((photo_height - canvas_height) / (2 * photo_height))
+
+    def update_canvas(self, center=False):
+        """Aktualisiert die Canvas-Anzeige mit Zoom"""
+        if self.image is not None:
+            # Kombiniere Originalbild und Annotation
+            display = cv2.cvtColor(self.image, cv2.COLOR_GRAY2BGR)
+            if self.current_stroke_mask is not None:
+                display[self.current_stroke_mask > 0] = [0, 255, 0]  # Grün für aktuellen Strich
+            display[self.annotation_mask > 0] = [0, 0, 255]  # Rot für bestätigte Annotationen
+
+            # Zoom anwenden
+            h, w = display.shape[:2]
+            new_size = (int(w * self.zoom_factor), int(h * self.zoom_factor))
+            display = cv2.resize(display, new_size, interpolation=cv2.INTER_LINEAR)
+
+            # Konvertiere für Tkinter
+            display = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
+            self.photo = ImageTk.PhotoImage(image=Image.fromarray(display))
+
+            if center:
+                # Vollständige Aktualisierung mit Zentrierung
+                self.canvas.delete("all")
+                self.canvas.config(scrollregion=(0, 0, new_size[0], new_size[1]))
+                self.root.after(50, self.center_image)
+            else:
+                # Schnelle Aktualisierung ohne Neupositionierung
+                self.canvas.delete("image")
+                img_x, img_y = self.get_image_position()
+                self.canvas.create_image(img_x, img_y, image=self.photo, anchor=tk.NW, tags="image")
+
+    def on_mousewheel(self, event):
+        """Handhabt Mausrad-Zoom"""
+        if self.image is None:
+            return
+
+        # Zoom-Faktor anpassen
+        if event.num == 4 or event.delta > 0:  # Zoom in
+            self.zoom_scale.set(min(self.zoom_scale.get() + 10, 400))
+        else:  # Zoom out
+            self.zoom_scale.set(max(self.zoom_scale.get() - 10, 100))
+
+    def on_zoom_change(self, value):
+        """Aktualisiert den Zoom"""
+        if self.image is None:
+            return
+
+        self.zoom_factor = int(value) / 100
+        # Vollständige Aktualisierung mit Zentrierung beim Zoomen
+        self.update_canvas(center=True)
+
+    def load_image(self):
+        """Lädt ein Bild und initialisiert die Annotationsmaske"""
+        file_path = filedialog.askopenfilename(
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.tif *.tiff *.bmp")])
+
+        if file_path:
+            # Bild laden und verarbeiten
+            self.image = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
+            if self.image is None:
+                print(f"Fehler beim Laden des Bildes: {file_path}")
+                return
+
+            # Auf 512x512 skalieren
+            self.image = cv2.resize(self.image, (512, 512))
+
+            # Bildverbesserung anwenden
+            self.image = self.enhance_image(self.image)
+
+            # Annotation initialisieren
+            self.annotation_mask = np.zeros_like(self.image)
+            self.annotation_history = [self.annotation_mask.copy()]
+
+            # Zoom zurücksetzen
+            self.zoom_scale.set(100)
+            self.zoom_factor = 1.0
+
+            # Bild anzeigen
+            self.update_canvas(center=True)
+
+    def start_draw(self, event):
+        """Startet den Zeichenvorgang"""
+        self.drawing = True
+        x, y = self.canvas_to_image_coords(event.x, event.y)
+        self.last_x, self.last_y = x, y
+
+        # Neue Maske für den aktuellen Strich
+        self.current_stroke_mask = np.zeros_like(self.image)
+
+    def draw(self, event):
+        """Zeichnet die Annotation"""
+        if self.drawing and self.image is not None:
+            x, y = self.canvas_to_image_coords(event.x, event.y)
+
+            # Zeichne Linie in die temporäre Maske
+            cv2.line(self.current_stroke_mask,
+                     (self.last_x, self.last_y),
+                     (x, y),
+                     255,  # Weiß
+                     self.pen_size.get())
+
+            self.last_x, self.last_y = x, y
+
+            # Update Anzeige ohne Neuzentrierung
+            self.update_canvas(center=False)
+
+    def stop_draw(self, event):
+        """Beendet den Zeichenvorgang und füllt die geschlossenen Bereiche"""
+        if self.drawing:
+            self.drawing = False
+
+            if self.current_stroke_mask is not None:
+                # Kombiniere aktuellen Strich mit bisheriger Annotation für die Konturenerkennung
+                combined_mask = cv2.bitwise_or(self.annotation_mask, self.current_stroke_mask)
+
+                # Finde alle Konturen in der kombinierten Maske
+                contours, _ = cv2.findContours(combined_mask,
+                                               cv2.RETR_EXTERNAL,
+                                               cv2.CHAIN_APPROX_SIMPLE)
+
+                # Erstelle eine neue Maske für die gefüllten Konturen
+                filled_mask = np.zeros_like(self.image)
+
+                # Fülle alle gefundenen Konturen
+                for contour in contours:
+                    cv2.drawContours(filled_mask, [contour], -1, 255, -1)
+
+                # Aktualisiere die Hauptmaske mit der gefüllten Version
+                self.annotation_mask = filled_mask.copy()
+                self.annotation_history.append(self.annotation_mask.copy())
+                self.current_stroke_mask = None
+                self.update_canvas(center=True)
+
+    def undo_last(self):
+        """Macht den letzten Strich rückgängig"""
+        if len(self.annotation_history) > 1:
+            self.annotation_history.pop()  # Entferne den letzten Zustand
+            self.annotation_mask = self.annotation_history[-1].copy()  # Stelle vorherigen Zustand wieder her
+            self.current_stroke_mask = None
+            self.update_canvas(center=False)  # Update ohne Neuzentrierung
+
+    def clear_annotation(self):
+        """Löscht alle Annotationen"""
+        if self.image is not None:
+            self.annotation_mask = np.zeros_like(self.image)
+            self.current_stroke_mask = None
+            self.annotation_history = [self.annotation_mask.copy()]  # Zurücksetzen der Historie
+            self.update_canvas(center=True)
+
+    def run(self):
+        """Startet die Anwendung"""
+        self.root.mainloop()
+
+
+def main():
+    print("Annotations-Tool wird gestartet...")
+    annotator = VesselAnnotator()
+
+    # Lade das Bild automatisch beim Start
+    image_path = "C:/Users/s.baumgart/Desktop/preprocessing AngioNet/frame_20 (41).png"
+    initial_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if initial_image is not None:
+        # Auf 512x512 skalieren
+        initial_image = cv2.resize(initial_image, (512, 512))
+
+        # Bildverbesserung anwenden
+        annotator.image = annotator.enhance_image(initial_image)
+
+        # Annotation initialisieren
+        annotator.annotation_mask = np.zeros_like(annotator.image)
+        annotator.annotation_history = [annotator.annotation_mask.copy()]
+        annotator.update_canvas(center=True)
+        print(f"Bild wurde geladen und verbessert: {image_path}")
+    else:
+        print(f"Fehler beim Laden des Bildes: {image_path}")
+
+    annotator.run()
+
+
+if __name__ == "__main__":
+    main()
