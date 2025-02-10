@@ -1,0 +1,134 @@
+import cv2
+import numpy as np
+import os
+from datetime import datetime
+
+
+def gradient_sharpening(image, ksize=3, alpha=1.0, beta=0.5, gamma=0, brightness_factor=1.0):
+    """
+    Erweiterter Gradient-basierter Schärfungsfilter mit Helligkeitskontrolle
+
+    Parameter:
+    - ksize: Kernel-Größe für Sobel
+    - alpha: Gewichtung des Originalbildes
+    - beta: Gewichtung des Gradienten
+    - gamma: Zusätzlicher Helligkeitswert
+    - brightness_factor: Faktor für die finale Helligkeit
+    """
+    # Berechne Sobel Gradienten
+    grad_x = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=ksize)
+    grad_y = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=ksize)
+
+    # Kombiniere Gradienten
+    gradient = np.sqrt(grad_x ** 2 + grad_y ** 2)
+
+    # Verstärke schwache Gradienten nicht-linear
+    gradient = np.power(gradient, 0.7)
+
+    # Normalisiere Gradient
+    gradient = cv2.normalize(gradient, None, 0, 255, cv2.NORM_MINMAX)
+
+    # Addiere gewichteten Gradienten zum Original
+    sharpened = cv2.addWeighted(image, alpha, gradient.astype(np.uint8), beta, gamma)
+
+    # Helligkeitsanpassung
+    sharpened = cv2.multiply(sharpened, brightness_factor)
+    sharpened = np.clip(sharpened, 0, 255).astype(np.uint8)
+
+    return sharpened
+
+
+def main():
+    # Eingabepfad
+    image_path = "C:/Users/s.baumgart/Desktop/preprocessing AngioNet/frame_35 (3).png"
+
+    # Erstelle Ausgabeordner
+    output_dir = os.path.join(os.path.dirname(image_path), "gradient_results_dark")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Lese Bild ein
+    original = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if original is None:
+        print(f"Fehler beim Einlesen des Bildes: {image_path}")
+        return
+
+    # Erstelle Zeitstempel für eindeutige Benennung
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Verschiedene Parameter-Kombinationen für den Gradient-Filter
+    parameters = {
+        'gradient_soft_dark': {
+            'ksize': 3,
+            'alpha': 0.9,  # Reduzierte Original-Gewichtung
+            'beta': 0.3,  # Schwache Gradient-Verstärkung
+            'gamma': -10,  # Leichte Abdunklung
+            'brightness_factor': 0.9
+        },
+        'gradient_medium_dark': {
+            'ksize': 3,
+            'alpha': 1.0,
+            'beta': 0.4,
+            'gamma': -15,
+            'brightness_factor': 0.85
+        },
+        'gradient_contrast_dark': {
+            'ksize': 5,
+            'alpha': 1.1,  # Leicht erhöhte Original-Gewichtung
+            'beta': 0.5,  # Mittlere Gradient-Verstärkung
+            'gamma': -20,  # Stärkere Abdunklung
+            'brightness_factor': 0.8
+        },
+        'gradient_deep_dark': {
+            'ksize': 5,
+            'alpha': 1.2,
+            'beta': 0.6,
+            'gamma': -25,
+            'brightness_factor': 0.75
+        },
+        'gradient_balanced_dark': {
+            'ksize': 3,
+            'alpha': 1.0,
+            'beta': 0.45,
+            'gamma': -12,
+            'brightness_factor': 0.88
+        },
+        'gradient_fine_dark': {
+            'ksize': 3,
+            'alpha': 0.95,
+            'beta': 0.35,
+            'gamma': -8,
+            'brightness_factor': 0.92
+        }
+    }
+
+    # Wende Filter mit verschiedenen Parametern an
+    for name, params in parameters.items():
+        try:
+            # Wende Filter an
+            sharpened = gradient_sharpening(
+                original,
+                ksize=params['ksize'],
+                alpha=params['alpha'],
+                beta=params['beta'],
+                gamma=params['gamma'],
+                brightness_factor=params['brightness_factor']
+            )
+
+            # Erstelle Ausgabepfad
+            output_path = os.path.join(output_dir, f"{name}_{timestamp}.png")
+
+            # Speichere Ergebnis
+            cv2.imwrite(output_path, sharpened)
+            print(f"Erfolgreich gespeichert: {output_path}")
+
+        except Exception as e:
+            print(f"Fehler bei Verarbeitung {name}: {str(e)}")
+
+    # Speichere auch das Originalbild zum Vergleich
+    original_output_path = os.path.join(output_dir, f"original_{timestamp}.png")
+    cv2.imwrite(original_output_path, original)
+    print(f"Originalbild gespeichert: {original_output_path}")
+
+
+if __name__ == "__main__":
+    main()
