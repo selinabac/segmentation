@@ -53,7 +53,7 @@ class VesselAnnotator:
 
         # Zoom Controls
         tk.Label(self.button_frame, text="Zoom:").pack(side=tk.LEFT, padx=5)
-        self.zoom_scale = tk.Scale(self.button_frame, from_=100, to=400, orient=tk.HORIZONTAL,
+        self.zoom_scale = tk.Scale(self.button_frame, from_=100, to=600, orient=tk.HORIZONTAL,
                                    command=self.on_zoom_change, length=100)
         self.zoom_scale.set(100)
         self.zoom_scale.pack(side=tk.LEFT, padx=5)
@@ -220,11 +220,21 @@ class VesselAnnotator:
     def update_canvas(self, center=False):
         """Aktualisiert die Canvas-Anzeige mit Zoom"""
         if self.image is not None:
-            # Kombiniere Originalbild und Annotation
+            # Erstelle Basis-Display
             display = cv2.cvtColor(self.image, cv2.COLOR_GRAY2BGR)
+
+            # Erstelle separate Layer für Annotationen
+            annotation_layer = np.zeros_like(display, dtype=np.float32)
+
+            # Füge aktuelle Striche und bestätigte Annotationen mit Transparenz hinzu
             if self.current_stroke_mask is not None:
-                display[self.current_stroke_mask > 0] = [0, 255, 0]  # Grün für aktuellen Strich
-            display[self.annotation_mask > 0] = [0, 0, 255]  # Rot für bestätigte Annotationen
+                annotation_layer[self.current_stroke_mask > 0] = [0, 1, 0]  # Grün für aktuellen Strich
+
+            # Füge bestätigte Annotationen mit Transparenz hinzu
+            annotation_layer[self.annotation_mask > 0] = [0, 0.5, 0]  # Halbtransparentes Grün (50%)
+
+            # Kombiniere die Layer
+            display = cv2.addWeighted(display, 1, (annotation_layer * 255).astype(np.uint8), 0.5, 0)
 
             # Zoom anwenden
             h, w = display.shape[:2]
@@ -327,6 +337,10 @@ class VesselAnnotator:
             self.drawing = False
 
             if self.current_stroke_mask is not None:
+                # Speichere aktuelle Ansicht
+                xview = self.canvas.xview()
+                yview = self.canvas.yview()
+
                 # Kombiniere aktuellen Strich mit bisheriger Annotation für die Konturenerkennung
                 combined_mask = cv2.bitwise_or(self.annotation_mask, self.current_stroke_mask)
 
@@ -346,7 +360,14 @@ class VesselAnnotator:
                 self.annotation_mask = filled_mask.copy()
                 self.annotation_history.append(self.annotation_mask.copy())
                 self.current_stroke_mask = None
-                self.update_canvas(center=True)
+
+                # Canvas aktualisieren
+                self.canvas.delete("all")
+                self.update_canvas(center=False)
+
+                # Ansicht wiederherstellen
+                self.canvas.xview_moveto(xview[0])
+                self.canvas.yview_moveto(yview[0])
 
     def undo_last(self):
         """Macht den letzten Strich rückgängig"""
