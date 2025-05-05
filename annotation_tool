@@ -1,3 +1,5 @@
+import sys
+sys.path.append(r'C:\Program Files\Python312\Lib\site-packages')
 import cv2
 import numpy as np
 import tkinter as tk
@@ -10,59 +12,144 @@ import time
 def save_annotation(self):
     """Speichert das Originalbild und die binäre Maske mit RCA/LCA Unterscheidung"""
     if self.image is not None and self.annotation_mask is not None:
-        # Erstelle ein Dialogfenster für die Auswahl zwischen RCA und LCA
-        vessel_type = tk.StringVar(value="LCA")  # Standardwert
+        # Base path
+        base_path = r"D:\Selina\phD\AngioNet\Annotationen"
 
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Gefäßtyp auswählen")
-        dialog.geometry("300x150")
-        dialog.transient(self.root)  # Dialog im Vordergrund halten
+        # Dialog für Hauptast/Nebenäste erstellen
+        branch_dialog = tk.Toplevel(self.root)
+        branch_dialog.title("Speicherort auswählen")
+        branch_dialog.geometry("450x200")
+        branch_dialog.transient(self.root)  # Dialog im Vordergrund halten
 
         # Zentriere das Dialogfenster
-        dialog.geometry("+%d+%d" % (
-            self.root.winfo_rootx() + self.root.winfo_width() / 2 - 150,
-            self.root.winfo_rooty() + self.root.winfo_height() / 2 - 75))
+        branch_dialog.geometry("+%d+%d" % (
+            self.root.winfo_rootx() + self.root.winfo_width() // 2 - 225,
+            self.root.winfo_rooty() + self.root.winfo_height() // 2 - 100))
 
-        # Label
-        tk.Label(dialog, text="Bitte wählen Sie den Gefäßtyp:").pack(pady=10)
+        # Variable für Hauptast/Nebenäste
+        branch_var = tk.StringVar(value="Hauptast")
 
-        # Radio Buttons
-        tk.Radiobutton(dialog, text="LCA (Left Coronary Artery)", variable=vessel_type, value="LCA").pack()
-        tk.Radiobutton(dialog, text="RCA (Right Coronary Artery)", variable=vessel_type, value="RCA").pack()
+        # Header
+        tk.Label(branch_dialog, text="Speicherort auswählen", font=("Arial", 12, "bold")).pack(pady=(15, 5))
 
-        # Speichern Variable für Dialog-Ergebnis
-        result = {"confirmed": False}
+        # Beschreibung
+        tk.Label(branch_dialog, text="Bitte wählen Sie, wo die Annotation gespeichert werden soll:").pack(pady=(0, 10))
+
+        # Radiobuttons mit den Optionen
+        option_frame = tk.Frame(branch_dialog)
+        option_frame.pack(fill="x", padx=20)
+
+        option1 = os.path.join(base_path, "Hauptast")
+        option2 = os.path.join(base_path, "Nebenäste")
+
+        tk.Radiobutton(option_frame, text="Hauptast",
+                       variable=branch_var, value="Hauptast").pack(anchor="w", pady=5)
+        tk.Radiobutton(option_frame, text="Nebenäste",
+                       variable=branch_var, value="Nebenäste").pack(anchor="w", pady=5)
+
+        # Pfad-Anzeige (optional)
+        path_var = tk.StringVar(value=option1)
+
+        def update_path(*args):
+            selected = branch_var.get()
+            if selected == "Hauptast":
+                path_var.set(option1)
+            else:
+                path_var.set(option2)
+
+        branch_var.trace("w", update_path)
+
+        tk.Label(branch_dialog, textvariable=path_var, fg="gray").pack(pady=5)
+
+        # Ergebnis-Dictionary
+        result = {"confirmed": False, "branch": None}
 
         def on_confirm():
             result["confirmed"] = True
-            dialog.destroy()
+            result["branch"] = branch_var.get()
+            branch_dialog.destroy()
 
         def on_cancel():
-            dialog.destroy()
+            branch_dialog.destroy()
 
         # Buttons
-        button_frame = tk.Frame(dialog)
-        button_frame.pack(pady=10)
-        tk.Button(button_frame, text="Bestätigen", command=on_confirm).pack(side=tk.LEFT, padx=5)
-        tk.Button(button_frame, text="Abbrechen", command=on_cancel).pack(side=tk.LEFT, padx=5)
+        button_frame = tk.Frame(branch_dialog)
+        button_frame.pack(pady=15)
+        tk.Button(button_frame, text="Weiter", command=on_confirm, width=10).pack(side=tk.LEFT, padx=10)
+        tk.Button(button_frame, text="Abbrechen", command=on_cancel, width=10).pack(side=tk.LEFT, padx=10)
 
-        # Warte auf Dialog
-        dialog.wait_window()
+        # Dialog modal machen
+        branch_dialog.grab_set()
+        branch_dialog.wait_window()
 
-        # Wenn der Benutzer abgebrochen hat, beende die Funktion
+        # Wenn abgebrochen, Funktion beenden
         if not result["confirmed"]:
             return
 
         # Speicherverzeichnis festlegen
-        save_dir = r"D:\Selina\phD\AngioNet"
+        save_dir = os.path.join(base_path, result["branch"])
         os.makedirs(save_dir, exist_ok=True)
+
+        # Dialog für Gefäßtyp erstellen
+        vessel_dialog = tk.Toplevel(self.root)
+        vessel_dialog.title("Gefäßtyp auswählen")
+        vessel_dialog.geometry("350x200")
+        vessel_dialog.transient(self.root)
+
+        # Zentriere den Dialog
+        vessel_dialog.geometry("+%d+%d" % (
+            self.root.winfo_rootx() + self.root.winfo_width() // 2 - 175,
+            self.root.winfo_rooty() + self.root.winfo_height() // 2 - 100))
+
+        # Variable für Gefäßtyp
+        vessel_type = tk.StringVar(value="LCA")
+
+        # Header
+        tk.Label(vessel_dialog, text="Gefäßtyp auswählen", font=("Arial", 12, "bold")).pack(pady=(15, 5))
+
+        # Beschreibung
+        tk.Label(vessel_dialog, text="Bitte wählen Sie den Gefäßtyp:").pack(pady=(0, 10))
+
+        # Radiobuttons
+        option_frame = tk.Frame(vessel_dialog)
+        option_frame.pack(fill="x", padx=20)
+
+        tk.Radiobutton(option_frame, text="LCA (Left Coronary Artery)",
+                       variable=vessel_type, value="LCA").pack(anchor="w", pady=5)
+        tk.Radiobutton(option_frame, text="RCA (Right Coronary Artery)",
+                       variable=vessel_type, value="RCA").pack(anchor="w", pady=5)
+
+        # Ergebnis-Dictionary
+        vessel_result = {"confirmed": False, "type": None}
+
+        def on_vessel_confirm():
+            vessel_result["confirmed"] = True
+            vessel_result["type"] = vessel_type.get()
+            vessel_dialog.destroy()
+
+        def on_vessel_cancel():
+            vessel_dialog.destroy()
+
+        # Buttons
+        button_frame = tk.Frame(vessel_dialog)
+        button_frame.pack(pady=15)
+        tk.Button(button_frame, text="Speichern", command=on_vessel_confirm, width=10).pack(side=tk.LEFT, padx=10)
+        tk.Button(button_frame, text="Abbrechen", command=on_vessel_cancel, width=10).pack(side=tk.LEFT, padx=10)
+
+        # Dialog modal machen
+        vessel_dialog.grab_set()
+        vessel_dialog.wait_window()
+
+        # Wenn abgebrochen, Funktion beenden
+        if not vessel_result["confirmed"]:
+            return
 
         # Verwende den ursprünglichen Bildnamen wenn vorhanden, sonst einen Zeitstempel
         if hasattr(self, 'current_image_path'):
             original_filename = os.path.splitext(os.path.basename(self.current_image_path))[0]
-            save_filename = f"{original_filename}_{vessel_type.get()}_{time.strftime('%Y%m%d')}"
+            save_filename = f"{original_filename}_{vessel_result['type']}_{time.strftime('%Y%m%d')}"
         else:
-            save_filename = f"annotation_{vessel_type.get()}_{time.strftime('%Y%m%d_%H%M%S')}"
+            save_filename = f"annotation_{vessel_result['type']}_{time.strftime('%Y%m%d_%H%M%S')}"
 
         base_path = os.path.join(save_dir, save_filename)
 
@@ -96,9 +183,11 @@ def save_annotation(self):
             f"• {save_filename}_original.png\n"
             f"• {save_filename}_mask.png\n"
             f"• {save_filename}_overlay.png\n\n"
-            f"Gefäßtyp: {vessel_type.get()}\n"
+            f"Gefäßtyp: {vessel_result['type']}\n"
             f"Speicherort: {save_dir}"
         )
+
+
 class VesselAnnotator:
 
     def show_welcome_dialog(self):
@@ -121,9 +210,9 @@ class VesselAnnotator:
         # Beschreibung
         description = """
         Beginne, indem du einen ganzen Ordner oder ein einzelnes Bild lädst.
-     
+
         Dieses Tool besitzt folgende Funktionen:
-        
+
         • Mit dem Mausrad kannst du Zoomen
         • Mit Shift + Mausrad kannst du dich durch die Bilder klicken oder 
         verwende die Pfeiltasten
@@ -151,7 +240,6 @@ class VesselAnnotator:
                   command=load_dir_and_close, width=20).pack(pady=5)
         tk.Button(button_frame, text="Einzelnes Bild laden",
                   command=load_image_and_close, width=20).pack(pady=5)
-
 
     def save_annotation(self):
         """Speichert das Originalbild und die binäre Maske mit RCA/LCA Unterscheidung"""
@@ -293,6 +381,13 @@ class VesselAnnotator:
         tk.Button(self.first_button_row, text="Speichern", command=self.save_annotation).pack(side=tk.LEFT, padx=5)
         tk.Button(self.first_button_row, text="Rückgängig", command=self.undo_last).pack(side=tk.LEFT, padx=5)
         tk.Button(self.first_button_row, text="Zurücksetzen", command=self.clear_annotation).pack(side=tk.LEFT, padx=5)
+
+        # Add eraser toggle button
+        self.eraser_mode = tk.BooleanVar(value=False)
+        self.eraser_button = tk.Checkbutton(self.first_button_row, text="Radiergummi",
+                                            variable=self.eraser_mode,
+                                            command=self.toggle_eraser_mode)
+        self.eraser_button.pack(side=tk.LEFT, padx=5)
 
         # Zweite Reihe von Buttons für Navigation
         self.second_button_row = tk.Frame(self.button_frame)
@@ -741,20 +836,45 @@ class VesselAnnotator:
         x, y = self.canvas_to_image_coords(event.x, event.y)
         self.last_x, self.last_y = x, y
 
-        # Neue Maske für den aktuellen Strich
-        self.current_stroke_mask = np.zeros_like(self.image)
+        # Im Radiergummi-Modus kein temporäres Stroke-Masking notwendig
+        if not self.eraser_mode.get():
+            # Neue Maske für den aktuellen Strich
+            self.current_stroke_mask = np.zeros_like(self.image)
+        else:
+            # Im Radiergummi-Modus direkt in der Annotation-Maske radieren
+            cv2.circle(self.annotation_mask,
+                       (x, y),
+                       self.pen_size.get() * 2,  # Größerer Radius für den Radiergummi
+                       0,  # Schwarz (0) zum Löschen
+                       -1)  # Gefüllter Kreis
+            self.update_canvas(center=False)
+
+    def toggle_eraser_mode(self):
+        """Wechselt zwischen Zeichnen- und Radiergummi-Modus"""
+        if self.eraser_mode.get():
+            self.canvas.config(cursor="circle")  # Ändert den Cursor zum Radiergummi-Symbol
+        else:
+            self.canvas.config(cursor="cross")  # Zurück zum Zeichnen-Cursor
 
     def draw(self, event):
-        """Zeichnet die Annotation"""
+        """Zeichnet die Annotation oder radiert, je nach Modus"""
         if self.drawing and self.image is not None:
             x, y = self.canvas_to_image_coords(event.x, event.y)
 
-            # Zeichne Linie in die temporäre Maske
-            cv2.line(self.current_stroke_mask,
-                     (self.last_x, self.last_y),
-                     (x, y),
-                     255,  # Weiß
-                     self.pen_size.get())
+            if self.eraser_mode.get():
+                # Im Radiergummi-Modus: Lösche in der Annotation
+                cv2.circle(self.annotation_mask,
+                           (x, y),
+                           self.pen_size.get() * 2,  # Größerer Radius für den Radiergummi
+                           0,  # Schwarz (0) zum Löschen
+                           -1)  # Gefüllter Kreis
+            else:
+                # Im Zeichnen-Modus: Zeichne Linie in die temporäre Maske
+                cv2.line(self.current_stroke_mask,
+                         (self.last_x, self.last_y),
+                         (x, y),
+                         255,  # Weiß
+                         self.pen_size.get())
 
             self.last_x, self.last_y = x, y
 
@@ -765,6 +885,14 @@ class VesselAnnotator:
         """Beendet den Zeichenvorgang und behält die Zentrierung bei"""
         if self.drawing:
             self.drawing = False
+
+            # Im Radiergummi-Modus keine weitere Verarbeitung notwendig
+            if self.eraser_mode.get():
+                # Füge aktuellen Zustand zur Historie hinzu
+                self.annotation_history.append(self.annotation_mask.copy())
+                # Update mit Zentrierung
+                self.update_canvas()
+                return
 
             if self.current_stroke_mask is not None:
                 # Kombiniere aktuellen Strich mit bisheriger Annotation
@@ -835,7 +963,10 @@ class VesselAnnotator:
     def stop_pan(self, event):
         """Beendet das Verschieben des Bildes"""
         self.panning = False
-        self.canvas.config(cursor="cross")  # Setzt den Cursor zurück zum Kreuz
+        if self.eraser_mode.get():
+            self.canvas.config(cursor="circle")  # Radiergummi-Modus
+        else:
+            self.canvas.config(cursor="cross")  # Zeichnen-Modus
 
 
 def main():
@@ -844,7 +975,7 @@ def main():
     annotator.run()
 
     # Lade das Bild automatisch beim Start
-    image_path = "D:\Selina\phD\AngioNet\PNG\1 Koronare GE-KHK\400913\400913_SER00001_I00001_0000.png"
+    image_path = "C:\annotation tool"
     initial_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     if initial_image is not None:
         # Auf 512x512 skalieren
